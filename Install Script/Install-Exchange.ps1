@@ -1,19 +1,69 @@
-﻿<#
-.SYNOPSIS 
-    Installs Exchange 2010 and configures to DoD EE specifications post-install.
-.DESCRIPTION
-    THIS CODE AND INFORMATION ARE PROVIDED "AS IS" WITHOUT WARRANTY OF ANY
-    KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
-    IMPLIED WARRANTIES OF MERCHANTABILITY AND/OR FITNESS FOR A
-    PARTICULAR PURPOSE.
-.PARAMETER Recover
-    Switches the script to a recover mode instead of performing a fresh install.
+﻿#requires -version 2.0
+
+<#
+    .SYNOPSIS
+        Installs Exchange 2010 and configures to DoD EE specifications post-install.
+    .DESCRIPTION
+        This script is used to install Exchange 2010 in the DEE 1.0 environment.
+
+        THIS CODE AND INFORMATION ARE PROVIDED "AS IS" WITHOUT WARRANTY OF ANY
+        KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+        IMPLIED WARRANTIES OF MERCHANTABILITY AND/OR FITNESS FOR A
+        PARTICULAR PURPOSE.
+        
+        Author: James E. Miller
+        Version: 1.1.20130822 
+    .PARAMETER SourceDir
+        Location of the Exchange source files in the installation package.
+    .PARAMETER ScriptsDir
+        Location of the Scripts folder in the installation package which contains
+        supplementary installation files.
+    .PARAMETER PrereqsDir
+        Location of prerequisite packages for the install like the Office Filter Pack.
+    .PARAMETER TargetDir
+        Target location of the Exchange install.
+    .PARAMETER Recover
+        Puts the script into recovery mode instead of performing a fresh install.
+    .EXAMPLE
+        .\Install-Exchange.ps1
+
+        This uses the script in its default install mode which will configure Exchange on each
+        server in the manifest file.
+    .EXAMPLE
+        .\Install-Exchange.ps1 -SourceDir "Z:\Exchange2010SP3"
+
+        This uses the script in its default install mode but overrides the default location of
+        the source installation files.
+    .EXAMPLE
+        .\Install-Exchange.ps1 -Recover
+
+        This tells the script to go into recovery mode which will reinstall Exchange on servers
+        in a disaster recovery situation.
 #>
 
-# Authored by: James E. Miller, Microsoft
-# Version: 2.0.2013.0807
-
-param( [switch]$Recover = $false )
+param( 
+    #Folder location of the Exchange source files in the installation package.
+    [Parameter(Mandatory=$true)]
+    [ValidateScript({Test-Path $_ -PathType Container})]
+    [string]$SourceDir = "D:\software\Exchange2010SP3",
+    
+    #Location of the Scripts folder in the installation package.
+    [Parameter(Mandatory=$true)]
+    [ValidateScript({Test-Path $_ -PathType Container})]
+    [string]$ScriptsDir = "D:\software\scripts",
+    
+    #Location of prerequisite packages for Exchange 2010 install.
+    [Parameter(Mandatory=$true)]
+    [ValidateScript({Test-Path $_ -PathType Container})]
+    [string]$PrereqsDir = "D:\software\PreReqPatches2008R2",
+    
+    #Target location of the Exchange install.
+    [Parameter(Mandatory=$true)]
+    [string]$TargetDir = "D:\program files\exchsrvr",
+    
+    #Sets script to recover mode.
+    [switch]$Recover
+)
 
 #region Global Constants
 #DO NOT CHANGE ANYTHING IN THIS SECTION
@@ -24,22 +74,10 @@ $global:DOMAIN = [System.DirectoryServices.ActiveDirectory.Domain]::GetComputerD
 $global:AD_SITE = [System.DirectoryServices.ActiveDirectory.ActiveDirectorySite]::GetComputerSite()
 $global:SITE_NAME = $AD_SITE.Name
 $global:GC_SERVER = ($DOMAIN.DomainControllers | ? { $_.SiteName -eq $AD_SITE } | Get-Random).Name
-$ErrorActionPreference.Continue
+$ErrorActionPreference = "Continue"
 #endregion
 
 #region Install Constants
-#Location of the Scripts folder in the installation package
-$INSTALL_SCRIPTS_DIR = "D:\software\scripts"
-
-#Folder location of the Exchange source files in the installation package
-$INSTALL_SOURCE_DIR = "D:\software\Exchange2010SP3"
-
-#Location of prerequisite packages for Exchange 2010 install
-$PREREQS_DIR = "D:\software\PreReqPatches2008R2"
-
-#Target location of the Exchange install
-$TARGET_DIR = "D:\program files\exchsrvr"
-
 #Folder location for the logging of this script
 $INSTALL_LOG_DIR = "D:\ExchAutoInstall"
 
@@ -49,7 +87,6 @@ $CERT_FILE = $INSTALL_LOG_DIR + "\$MACHINE_NAME-cert.req"
 #Exchange 2010 Product Keys
 $ENT_PROD_KEY = "GVMTV-GMXWH-C234M-8FMWP-TFPFP"
 $STD_PROD_KEY = "XJG6B-4D4YV-4M338-Q42H6-39VT2"
-
 #endregion
  
 #region Client Access Constants
@@ -109,13 +146,13 @@ $IIS_LOG_FIELDS = "Date,Time,ClientIP,UserName,ServerIP,ServerPort,Method,UriSte
 
 #region Site-SpecificConstants
 #Matches the computer AD site to the info in sitelist.csv and assigns proper FQDNS to client access urls and SMTP FQDNs.
-if ((Test-Path $INSTALL_SCRIPTS_DIR\sitelist.csv ) -eq $false) {
+if ((Test-Path $ScriptsDir\sitelist.csv ) -eq $false) {
 	Write-Host "Cannot find sitelist.csv in the proper location.`n`nPress any key to exit..." -ForegroundColor Red
 	$Host.UI.RawUI.ReadKey() | Out-Null
 	exit
 }
 else {
-    $siteListFile = Import-CSV $INSTALL_SCRIPTS_DIR\sitelist.csv
+    $siteListFile = Import-CSV $ScriptsDir\sitelist.csv
 
     $siteInfo = $siteListFile | ? { $_.siteName.toLower() -eq $SITE_NAME.toLower() }
 
@@ -246,7 +283,7 @@ function InstallFilterPack {
 	Push-Location
 	#Install Microsoft Filter Pack
 	Write-Host "Installing Microsoft Filter Pack..."
-	$expression = "$PREREQS_DIR\FilterPack64bit.exe /quiet /norestart"
+	$expression = "$PrereqsDir\FilterPack64bit.exe /quiet /norestart"
 	Invoke-Expression $expression
 	Start-Sleep -Seconds 10
 	Write-Host "Filter Pack installation done!" -ForegroundColor Green
@@ -255,7 +292,7 @@ function InstallFilterPack {
 
 #Loads Exchange Management Shell into the console.  Used for post-installation Exchange configuration.
 function Connect-Exchange {
-	. $TARGET_DIR\bin\RemoteExchange.ps1
+	. $TargetDir\bin\RemoteExchange.ps1
 	Connect-ExchangeServer -serverFQDN $MACHINE_NAME
 	Start-Sleep 30
 }
@@ -288,13 +325,13 @@ function Complete-Install {
 
 #region Install Functions
 function Install-Exchange2010 {
-	if ((Test-Path $INSTALL_SCRIPTS_DIR\manifest.csv ) -eq $false) { 
+	if ((Test-Path $ScriptsDir\manifest.csv ) -eq $false) { 
 		Write-Host "Cannot find manifest.csv in the proper location.`n`nPress any key to exit..." -ForegroundColor Red
 		$Host.UI.RawUI.ReadKey() | Out-Null
 		exit
 	}
     else {
-	    $manifestFile = Import-CSV $INSTALL_SCRIPTS_DIR\manifest.csv
+	    $manifestFile = Import-CSV $ScriptsDir\manifest.csv
 	    $server = $manifestFile | ? { $_.servername.toLower() -eq $MACHINE_NAME.toLower() }
 	    if ($server) {
 		    $role = $server.role
@@ -304,6 +341,7 @@ function Install-Exchange2010 {
 			    "MB" {Install-MBX}
 			    "ET" {Install-ETS}
 			    "EDSP" {Install-CASNoCAC}
+                "AIO" {Install-AIO}
 			    "MT" {Install-MGMT}
 			    default {
 				    Write-Host "$role is not a valid role code for Exchange installation.`n`nPress any key to exit..." -ForegroundColor Red
@@ -326,12 +364,12 @@ function Install-CASHTS {
 	Push-Location
 
 	#Install Exchange 2010 with CAS and Hub roles.
-	Set-Location $INSTALL_SOURCE_DIR
+	Set-Location $SourceDir
     if ($Recover) {
-        ./setup.com `/m:RecoverServer `/InstallWindowsComponents `/t:$TARGET_DIR `/u:"$INSTALL_SOURCE_DIR\updates" `/DoNotStartTransport `/dc:$GC_SERVER
+        ./setup.com `/m:RecoverServer `/InstallWindowsComponents `/t:$TargetDir `/u:"$SourceDir\updates" `/DoNotStartTransport `/dc:$GC_SERVER
     }
     else {
-	    ./setup.com `/m:Install `/r:C`,H `/InstallWindowsComponents `/t:$TARGET_DIR `/u:"$INSTALL_SOURCE_DIR\updates" `/DoNotStartTransport `/dc:$GC_SERVER
+	    ./setup.com `/m:Install `/r:C`,H `/InstallWindowsComponents `/t:$TargetDir `/u:"$SourceDir\updates" `/DoNotStartTransport `/dc:$GC_SERVER
     }
 	Pop-Location
 	. Connect-Exchange
@@ -360,12 +398,12 @@ function Install-HTS {
 	Push-Location
 
 	#Install Exchange 2010 with the Hub role.
-	Set-Location $INSTALL_SOURCE_DIR
+	Set-Location $SourceDir
 	if ($Recover) {
-        ./setup.com `/m:RecoverServer `/InstallWindowsComponents `/t:$TARGET_DIR `/u:"$INSTALL_SOURCE_DIR\updates" `/DoNotStartTransport `/dc:$GC_SERVER
+        ./setup.com `/m:RecoverServer `/InstallWindowsComponents `/t:$TargetDir `/u:"$SourceDir\updates" `/DoNotStartTransport `/dc:$GC_SERVER
     }
     else {
-        ./setup.com `/m:Install `/r:H `/InstallWindowsComponents `/t:$TARGET_DIR `/u:"$INSTALL_SOURCE_DIR\updates" `/DoNotStartTransport `/dc:$GC_SERVER
+        ./setup.com `/m:Install `/r:H `/InstallWindowsComponents `/t:$TargetDir `/u:"$SourceDir\updates" `/DoNotStartTransport `/dc:$GC_SERVER
     }
 	Pop-Location
 	. Connect-Exchange
@@ -391,12 +429,12 @@ function Install-CASNoCAC {
 	Push-Location
 
 	#Install Exchange 2010 with the CAS role.
-	Set-Location $INSTALL_SOURCE_DIR
+	Set-Location $SourceDir
 	if ($Recover) {
-        ./setup.com `/m:RecoverServer `/InstallWindowsComponents `/t:$TARGET_DIR `/u:"$INSTALL_SOURCE_DIR\updates" `/dc:$GC_SERVER
+        ./setup.com `/m:RecoverServer `/InstallWindowsComponents `/t:$TargetDir `/u:"$SourceDir\updates" `/dc:$GC_SERVER
     }
     else {
-        ./setup.com `/m:Install `/r:C `/InstallWindowsComponents `/t:$TARGET_DIR `/u:"$INSTALL_SOURCE_DIR\updates" `/dc:$GC_SERVER
+        ./setup.com `/m:Install `/r:C `/InstallWindowsComponents `/t:$TargetDir `/u:"$SourceDir\updates" `/dc:$GC_SERVER
     }
 	Pop-Location
 	. Connect-Exchange
@@ -416,12 +454,12 @@ function Install-MBX {
     Push-Location
 
 	#Install Exchange 2010 with the MBX role.
-	Set-Location $INSTALL_SOURCE_DIR
+	Set-Location $SourceDir
 	if ($Recover) {
-        ./setup.com `/m:RecoverServer `/InstallWindowsComponents `/t:$TARGET_DIR `/u:"$INSTALL_SOURCE_DIR\updates" `/dc:$GC_SERVER
+        ./setup.com `/m:RecoverServer `/InstallWindowsComponents `/t:$TargetDir `/u:"$SourceDir\updates" `/dc:$GC_SERVER
     }
     else {
-        ./setup.com `/m:Install `/r:M `/InstallWindowsComponents `/t:$TARGET_DIR `/u:"$INSTALL_SOURCE_DIR\updates" `/dc:$GC_SERVER
+        ./setup.com `/m:Install `/r:M `/InstallWindowsComponents `/t:$TargetDir `/u:"$SourceDir\updates" `/dc:$GC_SERVER
     }
 	Pop-Location
 	. Connect-Exchange
@@ -434,6 +472,40 @@ function Install-MBX {
 	Complete-Install
 }
 
+function Install-AIO {
+	Install-TelnetClient
+    Disable-InternetExplorer
+
+	Push-Location
+
+	#Install Exchange 2010 with CAS, Hub and MBX roles.
+	Set-Location $SourceDir
+    if ($Recover) {
+        ./setup.com `/m:RecoverServer `/InstallWindowsComponents `/t:$TargetDir `/u:"$SourceDir\updates" `/DoNotStartTransport `/dc:$GC_SERVER
+    }
+    else {
+	    ./setup.com `/m:Install `/r:C`,H`,M `/InstallWindowsComponents `/t:$TargetDir `/u:"$SourceDir\updates" `/DoNotStartTransport `/dc:$GC_SERVER
+    }
+	Pop-Location
+	. Connect-Exchange
+	
+	#License the Exchange server.
+	Set-ExchangeServer -Identity $MACHINE_NAME -ProductKey $ENT_PROD_KEY -Confirm:$false
+
+	#Generate a Certificate Request file if fresh install
+    if (!($Recover)) {
+	    $certData = New-ExchangeCertificate -GenerateRequest -SubjectName "CN=$MACHINE_FQDN, OU=DISA, OU=PKI, OU=DoD, O=U.S. Government, C=US" -DomainName $MACHINE_FQDN, $MACHINE_NAME, web.mail.mil, *.easf.csd.disa.mil, *.mail.mil -PrivateKeyExportable $true
+	    Set-Content -Path $CERT_FILE -Value $certData
+    }
+
+	Configure-HTS
+	Configure-CAS
+	Configure-CACAuthForOA
+    Configure-MBX
+	Configure-CommonIIS
+	Complete-Install
+}
+
 #Installs and configures the Edge Transport role
 function Install-ETS {
     Install-TelnetClient
@@ -442,12 +514,12 @@ function Install-ETS {
 	Push-Location
 
 	#Install Exchange 2010 with the Edge Transport role.
-	Set-Location $INSTALL_SOURCE_DIR
+	Set-Location $SourceDir
 	if ($Recover) {
-        ./setup.com `/m:RecoverServer `/InstallWindowsComponents `/t:$TARGET_DIR `/u:"$INSTALL_SOURCE_DIR\updates"
+        ./setup.com `/m:RecoverServer `/InstallWindowsComponents `/t:$TargetDir `/u:"$SourceDir\updates"
     }
     else {
-        ./setup.com `/m:Install `/r:E `/InstallWindowsComponents `/t:$TARGET_DIR `/u:"$INSTALL_SOURCE_DIR\updates"
+        ./setup.com `/m:Install `/r:E `/InstallWindowsComponents `/t:$TargetDir `/u:"$SourceDir\updates"
     }
     Pop-Location
     Add-PSSnapin Microsoft.Exchange.Management.PowerShell.E2010
@@ -467,8 +539,8 @@ function Install-ETS {
 
 #Installs the Exchange Management tools
 function Install-MGMT {
-    Set-Location $INSTALL_SOURCE_DIR
-	./setup.com `/m:Install `/r:MT `/InstallWindowsComponents `/t:$TARGET_DIR `/u:"$INSTALL_SOURCE_DIR\updates"
+    Set-Location $SourceDir
+	./setup.com `/m:Install `/r:MT `/InstallWindowsComponents `/t:$TargetDir `/u:"$SourceDir\updates"
 }
 
 #endregion
@@ -573,7 +645,7 @@ function Configure-TransportSettings {
 
 
 	#Update the edgetransport.exe.config file to move the queue DB and log paths.
-	$configFilePath = $TARGET_DIR + "\bin\edgetransport.exe.config"
+	$configFilePath = $TargetDir + "\bin\edgetransport.exe.config"
 	$xml = [XML](Get-Content $configFilePath)
 	$queueDB = $xml.configuration.SelectSingleNode("appSettings/add[@key='QueueDatabasePath']")
 	$queueLog = $xml.configuration.SelectSingleNode("appSettings/add[@key='QueueDatabaseLoggingPath']")
@@ -613,7 +685,7 @@ function Configure-CAS {
 	#Modifications to the OWA web.config file to enable ToU cookie checking 
 	$xml = New-Object XML
 	$xml.PreserveWhitespace = $true
-    $xml.Load("$TARGET_DIR\ClientAccess\Owa\web.config")
+    $xml.Load("$TargetDir\ClientAccess\Owa\web.config")
 	$oldappSettings = @($xml.configuration.appsettings.add)[0]
 	$oldmodules = @($xml.configuration.location."system.webServer".modules.add)[0]
 
@@ -626,13 +698,13 @@ function Configure-CAS {
 		$xml.configuration.location."system.webServer".modules.PrependChild($nmcomment)
 	} 
 
-	$xml.save("$TARGET_DIR\ClientAccess\Owa\web.config")
+	$xml.save("$TargetDir\ClientAccess\Owa\web.config")
 	
 
 	#Modifications to the MRS config file to enable more mailbox imports simultaneously
 	$xml = New-Object XML
 	$xml.PreserveWhitespace = $true
-    $xml.Load("$TARGET_DIR\Bin\MSExchangeMailboxReplication.exe.config")
+    $xml.Load("$TargetDir\Bin\MSExchangeMailboxReplication.exe.config")
 	$oldMRSSettings = @($xml.Configuration.MRSConfiguration)[0]
 	
 	$newMRSSettings = $oldMRSSettings.clone()
@@ -642,7 +714,7 @@ function Configure-CAS {
 	
 	$xml.configuration.ReplaceChild($newMRSSettings, $oldMRSSettings)
 
-	$xml.save("$TARGET_DIR\Bin\MSExchangeMailboxReplication.exe.config")
+	$xml.save("$TargetDir\Bin\MSExchangeMailboxReplication.exe.config")
 	
 
 	#Modifications to .NET config to increase the requestQueueLimit
@@ -680,17 +752,17 @@ function Configure-CAS {
 	}
 
 	#Copy files used for OWA ToU Banner to WWWRoot directory. Add App_Code and checkforcookie.cs file
-	Copy-Item $INSTALL_SCRIPTS_DIR\dod.gif -Destination c:\inetpub\wwwroot\dod.gif
-	Copy-Item $INSTALL_SCRIPTS_DIR\web.config.tou -Destination c:\inetpub\wwwroot\web.config
-	Copy-Item $INSTALL_SCRIPTS_DIR\TermsOfUse.aspx -Destination c:\inetpub\wwwroot\TermsOfUse.aspx
+	Copy-Item $ScriptsDir\dod.gif -Destination c:\inetpub\wwwroot\dod.gif
+	Copy-Item $ScriptsDir\web.config.tou -Destination c:\inetpub\wwwroot\web.config
+	Copy-Item $ScriptsDir\TermsOfUse.aspx -Destination c:\inetpub\wwwroot\TermsOfUse.aspx
 
 
-	if((Test-Path $TARGET_DIR\App_Code) -eq $false) {
-		New-Item $TARGET_DIR\App_Code -ItemType directory
+	if((Test-Path $TargetDir\App_Code) -eq $false) {
+		New-Item $TargetDir\App_Code -ItemType directory
 	}
 
-	Copy-Item $INSTALL_SCRIPTS_DIR\CheckForCookie.cs -Destination "$TARGET_DIR\App_Code\CheckForCookie.cs"
-    Copy-Item $TARGET_DIR\App_Code $TARGET_DIR\ClientAccess\Owa -recurse
+	Copy-Item $ScriptsDir\CheckForCookie.cs -Destination "$TargetDir\App_Code\CheckForCookie.cs"
+    Copy-Item $TargetDir\App_Code $TargetDir\ClientAccess\Owa -recurse
 
 }
 
@@ -698,8 +770,8 @@ function Configure-CAS {
 function Configure-CACAuthForOA {
 	Push-Location
 	#Run script and commands to enable certificate-based authentication for Outlook Anywhere			
-	. $TARGET_DIR\Scripts\Enable-OutlookCertificateAuthentication.ps1
-	Set-Location $INSTALL_SCRIPTS_DIR
+	. $TargetDir\Scripts\Enable-OutlookCertificateAuthentication.ps1
+	Set-Location $ScriptsDir
 	cscript adsutil.vbs set w3svc/1/SSLAlwaysNegoClientCert true
 	Pop-Location
 }
