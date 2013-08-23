@@ -12,7 +12,7 @@
         PARTICULAR PURPOSE.
         
         Author: James E. Miller
-        Version: 1.1.20130822 
+        Version: 2.1.20130822 
     .PARAMETER SourceDir
         Location of the Exchange source files in the installation package.
     .PARAMETER ScriptsDir
@@ -60,6 +60,11 @@ param(
     #Target location of the Exchange install.
     [Parameter(Mandatory=$true)]
     [string]$TargetDir = "D:\program files\exchsrvr",
+
+    #Location of the wildcard certificate.
+    [Parameter(Mandatory=$true)]
+    [ValidateScript({Test-Path $_ -PathType Leaf~})]
+    [string]$WildcardCert = "Z:\Software\Exchange\Wildcard Certificate\WildcardCert\WildcardCert.pfx",
     
     #Sets script to recover mode.
     [switch]$Recover
@@ -67,13 +72,13 @@ param(
 
 #region Global Constants
 #DO NOT CHANGE ANYTHING IN THIS SECTION
-$global:MACHINE = Get-WMIObject "Win32_ComputerSystem"
-$global:MACHINE_NAME = $MACHINE.Name
-$global:MACHINE_FQDN = $MACHINE_NAME + "." + $MACHINE.Domain
-$global:DOMAIN = [System.DirectoryServices.ActiveDirectory.Domain]::GetComputerDomain()
-$global:AD_SITE = [System.DirectoryServices.ActiveDirectory.ActiveDirectorySite]::GetComputerSite()
-$global:SITE_NAME = $AD_SITE.Name
-$global:GC_SERVER = ($DOMAIN.DomainControllers | ? { $_.SiteName -eq $AD_SITE } | Get-Random).Name
+$MACHINE = Get-WMIObject "Win32_ComputerSystem"
+$MACHINE_NAME = $MACHINE.Name
+$MACHINE_FQDN = $MACHINE_NAME + "." + $MACHINE.Domain
+$DOMAIN = [System.DirectoryServices.ActiveDirectory.Domain]::GetComputerDomain()
+$AD_SITE = [System.DirectoryServices.ActiveDirectory.ActiveDirectorySite]::GetComputerSite()
+$SITE_NAME = $AD_SITE.Name
+$GC_SERVER = ($DOMAIN.DomainControllers | ? { $_.SiteName -eq $AD_SITE } | Get-Random).Name
 $ErrorActionPreference = "Continue"
 #endregion
 
@@ -763,6 +768,11 @@ function Configure-CAS {
 
 	Copy-Item $ScriptsDir\CheckForCookie.cs -Destination "$TargetDir\App_Code\CheckForCookie.cs"
     Copy-Item $TargetDir\App_Code $TargetDir\ClientAccess\Owa -recurse
+
+    #Install and configure the wildcard certificate.
+    $password = (Get-Credential).password
+    $fileData = ([Byte[]]$(Get-Content -Path $WildcardCert -Encoding byte -ReadCount 0))
+    Import-ExchangeCertificate -FileData $fileData -Password $password | Enable-ExchangeCertificate –Services IIS,POP,IMAP -Confirm:$false
 
 }
 
