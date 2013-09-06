@@ -12,7 +12,7 @@
         PARTICULAR PURPOSE.
         
         Author: James E. Miller
-        Version: 2.2.20130828 
+        Version: 2.3.20130906 
     .PARAMETER SourceDir
         Location of the Exchange source files in the installation package.
     .PARAMETER ScriptsDir
@@ -126,6 +126,7 @@ $MSG_TRK_LOG_FILE_SIZE = "500MB" # Max size of single tracking log
 $MSG_EXPIRE_AGE = "2.00:00:00" # Max duration in queue
 $MSG_MAX_SIZE = "28MB" # Max message size
 $DUMPSTER_SIZE = "42MB" # Transport Dumpster Max Size
+$MSG_MAX_LOCAL_HOP = "8" # Max local hop count
 
 #Collect the GUID of the Production network adapter
 [string]$NET_GUID = Get-WMIObject "Win32_NetworkAdapter" | ? { $_.NetConnectionId -like "*production*"} | Select-Object -Property GUID
@@ -467,14 +468,14 @@ function Configure-HTS {
 	Get-ReceiveConnector "$MACHINE_NAME\Client $MACHINE_NAME" | Remove-ReceiveConnector -Confirm:$false -DomainController $GC_SERVER
 
 	#Update all receive connectors with Max message size, protocol logging, and STIG-required banner
-	Get-ReceiveConnector -Server $MACHINE_NAME | Set-ReceiveConnector -Banner "220 SMTP Server Ready" -MaxMessageSize $MSG_MAX_SIZE -ProtocolLoggingLevel Verbose -DomainController $GC_SERVER
+	Get-ReceiveConnector -Server $MACHINE_NAME | Set-ReceiveConnector -Banner "220 SMTP Server Ready" -MaxMessageSize $MSG_MAX_SIZE -MaxLocalHopCount $MSG_MAX_LOCAL_HOP -ProtocolLoggingLevel Verbose -DomainController $GC_SERVER
 
 	#Add server to Internal Relay Send Connector
 	$internalRelaySendConnector = Get-SendConnector ("Internal Send Connector $SITE_NAME") -ErrorAction SilentlyContinue
 	if ($internalRelaySendConnector) {
 		Set-SendConnector $internalRelaySendConnector -SourceTransportServers ($internalRelaySendConnector.SourceTransportServers + $MACHINE_NAME) -domaincontroller $GC_SERVER
 	} else {
-		New-SendConnector -Name "Internal Send Connector $SITE_NAME" -Enabled:$true -Usage 'Custom' -AddressSpaces 'SMTP:us.army.mil;10' -IsScopedConnector $false -DNSRoutingEnabled $false -UseExternalDNSServersEnabled $false -ProtocolLoggingLevel Verbose -MaxMessageSize 20480KB -SmartHosts "143.69.243.34", "143.69.251.34" -SourceTransportServers $MACHINE_NAME -domaincontroller $GC_SERVER
+		New-SendConnector -Name "Internal Send Connector $SITE_NAME" -Enabled:$true -Usage 'Custom' -AddressSpaces 'SMTP:us.army.mil;10' -IsScopedConnector $false -DNSRoutingEnabled $false -UseExternalDNSServersEnabled $false -ProtocolLoggingLevel Verbose -MaxMessageSize $MSG_MAX_SIZE -SmartHosts "143.69.243.34", "143.69.251.34" -SourceTransportServers $MACHINE_NAME -domaincontroller $GC_SERVER
 	}
 }
 
@@ -489,7 +490,7 @@ function Configure-ETS {
 	Set-TransportServer -ConnectivityLogEnabled $true -ConnectivityLogMaxAge $HUB_LOG_MAX_AGE -ConnectivityLogMaxDirectorySize $HUB_LOGDIR_MAX_SIZE -ConnectivityLogMaxFileSize $HUB_LOGFILE_MAX_SIZE -ConnectivityLogPath $HUB_CONN_LOG_DIR -MessageTrackingLogEnabled $true -MessageTrackingLogMaxAge $MSG_TRK_LOG_AGE -MessageTrackingLogMaxDirectorySize $MSG_TRK_LOG_DIR_SIZE -MessageTrackingLogMaxFileSize $MSG_TRK_LOG_FILE_SIZE -MessageTrackingLogPath $HUB_TRACK_LOG_DIR -MessageTrackingLogSubjectLoggingEnabled $false -PipelineTracingPath $HUB_PIPE_LOG_DIR -ReceiveProtocolLogMaxAge $HUB_LOG_MAX_AGE -ReceiveProtocolLogMaxDirectorySize $HUB_LOGDIR_MAX_SIZE -ReceiveProtocolLogMaxFileSize $HUB_LOGFILE_MAX_SIZE -ReceiveProtocolLogPath $HUB_RCV_LOG_DIR -RoutingTableLogMaxAge $HUB_LOG_MAX_AGE -RoutingTableLogMaxDirectorySize $HUB_LOGDIR_MAX_SIZE -RoutingTableLogPath $HUB_ROUTE_LOG_DIR -SendProtocolLogMaxAge $HUB_LOG_MAX_AGE -SendProtocolLogMaxDirectorySize $HUB_LOGDIR_MAX_SIZE -SendProtocolLogMaxFileSize $HUB_LOGFILE_MAX_SIZE -SendProtocolLogPath $HUB_SND_LOG_DIR -MessageExpirationTimeout $MSG_EXPIRE_AGE -ExternalDNSAdapterGUID $NET_GUID -InternalDNSAdapterGUID $NET_GUID -Confirm:$false | Out-Null
 
 	#Update the receive connector with Max message size, protocol logging, and STIG-required banner
-	Get-ReceiveConnector | Set-ReceiveConnector -Banner "220 SMTP Server Ready" -MaxMessageSize $MSG_MAX_SIZE -ProtocolLoggingLevel Verbose
+	Get-ReceiveConnector | Set-ReceiveConnector -Banner "220 SMTP Server Ready" -MaxMessageSize $MSG_MAX_SIZE -MaxLocalHopCount $MSG_MAX_LOCAL_HOP -ProtocolLoggingLevel Verbose
 
     #Create a Transport Rule that redirects messages with Blank Servers to a quarantine mailbox
 	New-TransportRule "Quarantine Messages From Blank Senders" -FromAddressMatchesPattern "^$" -RedirectMessageTo $QUARANTINE_EMAIL -Enabled $true -Comments "Quarantines messages with blank senders by redirecting them to a quarantine mailbox per STIG requirements."
